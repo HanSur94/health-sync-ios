@@ -2,105 +2,113 @@
 
 # HealthSync
 
-**Your Apple Health data on your own machine, without a subscription or a cloud account.**
+HealthSync is a small app for iOS. It reads Apple Health and writes three JSON files into a folder
+that you select. Point a reader at these files. Then you have your own health data pipeline. You
+need no subscription and no cloud account.
 
-HealthSync is a small iOS app that reads Apple Health and writes three JSON files into a folder you
-pick — iCloud Drive, a local folder, anything. Point a reader at those files and you have your own
-health data pipeline. The reader this was built for is
-[`health-export-mcp`](https://github.com/inkandswitch/health-export-mcp), which serves the files to
-an AI agent over MCP.
+The reader that this app was made for is
+[`health-export-mcp`](https://github.com/inkandswitch/health-export-mcp). That program serves the
+files to an AI agent over MCP.
 
-It exists because the alternative was a €24.99 one-time app. This is ~700 lines of Swift and a free
-Apple developer account.
+The alternative was a paid app that costs 24.99 EUR. This app is approximately 700 lines of Swift
+code and it uses a free Apple developer account.
 
 <img src="docs/screenshots/main-light.png" width="300" alt="HealthSync main screen"> <img src="docs/screenshots/main-dark.png" width="300" alt="HealthSync in dark mode">
 
-*(Screenshots from the simulator running its `-seed` demo fixture — the numbers are sample data,
-not anyone's health record.)*
+*The screenshots show the `-seed` demo fixture in the simulator. The values are sample data. They
+are not a health record.*
 
 ---
 
 ## What it does
 
-- Reads **18 health quantity types** — steps, energy, sleep, heart rate, HRV, resting heart rate,
-  VO₂max, oxygen saturation, respiratory rate, exercise and stand time, flights climbed, and more —
-  over a rolling **730-day window**, aggregated per day.
-- Reads every **workout** with distance, energy, average and peak heart rate.
-- Clusters **sleep samples into sessions**, so a split night stays two sessions instead of one
-  invented block.
-- Writes all of it into a folder you choose, manually or on a schedule.
-- **Never writes to HealthKit.** Read-only, always.
+- The app reads 18 health data types. These types include steps, energy, sleep, heart rate, HRV,
+  resting heart rate, VO2max, oxygen saturation, respiratory rate, exercise time, stand time and
+  flights climbed.
+- The app reads a rolling period of 730 days. It aggregates the values for each day.
+- The app reads all workouts. Each workout has distance, energy, average heart rate and peak
+  heart rate.
+- The app groups sleep samples into sessions. A split night stays two sessions. The app does not
+  make one artificial block.
+- The app writes the data into the folder that you select. You can start the export manually or
+  with a schedule.
+- The app never writes to HealthKit. It only reads the data.
 
 ## The pipeline
 
 ```mermaid
 flowchart LR
     A[Apple Health<br/>on the iPhone] -->|HealthKit read| B[HealthSync]
-    B -->|writes 3 JSON files| C[Folder you picked<br/>e.g. iCloud Drive]
-    C -->|your choice: cron, rsync,<br/>scp, manual copy| D[Your Mac / NAS]
+    B -->|writes 3 JSON files| C[Folder you selected<br/>e.g. iCloud Drive]
+    C -->|your choice: cron, rsync,<br/>scp, manual copy| D[Your Mac or NAS]
     D -->|reads| E[health-export-mcp]
     E -->|MCP| F[Your agent]
 ```
 
-Nothing in the middle is a service. No account, no API key, no vendor. The app writes files; how they
-travel to the machine that reads them is your call. (On the author's setup: an iCloud folder, then a
-`tar | ssh` sync every 15 minutes.)
+No service operates between the app and your computer. There is no account, no API key and no
+vendor. The app writes files. You select the transport to the computer that reads them.
 
 ## Install
 
-Requirements: Xcode 15+, iOS 17+, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-(`brew install xcodegen`). A **free** Apple developer account is enough.
+You need Xcode 15 or later, iOS 17 or later, and
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`). A free Apple developer
+account is sufficient.
 
-```sh
-TEAM_ID=YOURTEAMID xcodegen generate     # your 10-character team id
-open HealthSync.xcodeproj
-```
+1. Run `TEAM_ID=YOURTEAMID xcodegen generate`. Use your 10-character team ID.
+2. Run `open HealthSync.xcodeproj`.
+3. Select your iPhone as the run destination.
+4. Press Command-R.
 
-Then pick your iPhone as the run destination and press **⌘R**. Xcode registers the device and creates
-the provisioning profile — that part cannot be scripted. If iOS blocks the app afterwards:
-*Settings → General → VPN & Device Management → trust your developer certificate.*
+Xcode registers the device and makes the provisioning profile. A script cannot do this step.
+If iOS blocks the app, open *Settings > General > VPN & Device Management* and trust your developer
+certificate.
 
-`DEVELOPMENT_TEAM` is read from the `TEAM_ID` environment variable so no team id is committed. Set it
-once per generated project, or edit `project.yml` if you prefer.
+The project reads `DEVELOPMENT_TEAM` from the `TEAM_ID` environment variable. Therefore no team ID
+is in the repository. Set the variable one time for each generated project. Or edit `project.yml`.
 
 ## First run
 
-1. Open the app, allow **Apple Health → read** for the types you care about.
-2. Tap **Ordner wählen (iCloud Drive)** and pick an empty folder. The app keeps a bookmark, not a
-   path, so it survives the folder moving — and needs no iCloud entitlement.
-3. Tap **Jetzt exportieren**. Three files appear in that folder.
+1. Open the app.
+2. Allow Apple Health read access for the data types that you need.
+3. Tap **Ordner wählen (iCloud Drive)** and select an empty folder.
+4. Tap **Jetzt exportieren**. The app writes three files into the folder.
 
-The first full export takes about 35 seconds on an iPhone for two years of data.
+The first full export takes approximately 35 seconds on an iPhone. The data covers two years.
+
+The app saves a bookmark and it does not save a path. Therefore a moved folder stays valid. The app
+needs no iCloud entitlement for this method.
 
 ## Automatic export
 
-iOS has no cron. The toggle **Automatisch exportieren** plus one or more times becomes a
-`BGProcessingTaskRequest` whose `earliestBeginDate` is the next slot in your list:
+iOS has no cron. The toggle **Automatisch exportieren** and the times make a
+`BGProcessingTaskRequest`. The `earliestBeginDate` is the next time in your list.
 
-- It is a **hint, not an alarm.** iOS decides when to actually run it — typically when the phone is
-  idle or charging. The screen shows the earliest possible time and when it last really ran.
-- It is a *processing* task, not an app-refresh task: a full export needs ~35 s and app-refresh tasks
-  are killed at 30.
-- It needs Background App Refresh on, no Low Power Mode, and the phone unlocked at least once since
-  boot. Force-quitting the app cancels it. Pending requests do not survive a reboot.
-- Several times per day are supported; the list is sorted and de-duplicated because iOS keeps exactly
-  **one** pending request per identifier.
+- The time is a hint. It is not an alarm. iOS selects the real start time. iOS usually starts the
+  task when the phone is idle or on a charger. The screen shows the earliest time and the last real
+  run.
+- The app uses a processing task and not an app-refresh task. A full export takes approximately 35
+  seconds. iOS stops an app-refresh task after 30 seconds.
+- Background App Refresh must be on. Low Power Mode must be off. You must unlock the phone one time
+  after a boot.
+- A force-quit of the app cancels the task. A reboot cancels a pending request.
+- You can set more than one time for each day. iOS keeps one pending request for each identifier.
+  Therefore the app sorts the list and removes duplicate entries.
 
-Opening the app always exports immediately, whatever the schedule says.
+If you open the app, the app exports immediately. The schedule does not change this behavior.
 
 ## What it writes
 
 | file | contents |
 |---|---|
-| `.health-cache.json` | per-day values for 18 quantity types, plus `_meta` (schema, written-at, requested/written counts) |
-| `.health-workouts-cache.json` | one row per workout: start, name, type, distance, energy, average and peak heart rate |
-| `health-sessions.json` | clustered sleep sessions: start, end, waking day, hours asleep, split into core/deep/rem/awake |
+| `.health-cache.json` | one value for each day and each of the 18 data types, plus a `_meta` block |
+| `.health-workouts-cache.json` | one row for each workout: start, name, type, distance, energy, average heart rate and peak heart rate |
+| `health-sessions.json` | sleep sessions: start, end, waking day, hours of sleep and the stages core, deep, rem and awake |
 
-A session ends where two sleep samples are more than **an hour** apart. Daily sleep hours and sessions
-come from the same HealthKit samples, so they cannot disagree.
+A session ends when two sleep samples are more than one hour apart. The daily sleep hours and the
+sessions come from the same HealthKit samples. Therefore they cannot disagree.
 
 ```jsonc
-// .health-cache.json (abridged)
+// .health-cache.json (shortened)
 {
   "step_count": { "unit": "count", "cumulative": true,
                   "daily": [ { "d": "2026-10-30", "v": 8412 }, ... ] },
@@ -109,59 +117,63 @@ come from the same HealthKit samples, so they cannot disagree.
 }
 ```
 
-The schema number is a contract: `health-export-mcp` refuses a cache whose `schema` it does not know.
+The schema number is a contract. `health-export-mcp` rejects a cache with an unknown schema number.
 
-## Design notes worth knowing
+## Design notes
 
-**Aggregation.** `HKStatisticsCollectionQuery` with one-day intervals; `sum` for cumulative types,
-`mean` for the rest. Sleep is deliberately not summed — it is counted from the samples directly.
+**Aggregation.** The app uses `HKStatisticsCollectionQuery` with intervals of one day. It uses `sum`
+for cumulative data types. It uses `mean` for the other data types. The app does not sum the sleep
+values. It counts the sleep from the samples.
 
-**Atomic writes.** Each file is written to a temporary name and renamed into place, and the export
-aborts if fewer than two metrics came back, so a failed read cannot blank a working cache.
+**Atomic writes.** The app writes each file to a temporary name and then renames the file. The
+export stops if fewer than two data types return a value. Therefore a failed read cannot erase a
+valid cache.
 
-**Percentages.** `HKUnit.percent()` is already 0…1. Apple's `export.xml` uses 0…100. If you convert a
-manual export instead, divide only there.
+**Percentages.** `HKUnit.percent()` returns a value from 0 to 1. The `export.xml` file of Apple
+returns a value from 0 to 100. Divide the value only in a converter for a manual export.
 
-**Workout names.** Apple's activity type is an integer enum. There is a generated 86-entry table rather
-than a `switch`, so an unknown future type degrades to "Other" instead of failing to compile.
+**Workout names.** The activity type of Apple is an integer. The app uses a generated table with 86
+entries and not a `switch` statement. Therefore an unknown future type shows "Other" and the build
+does not fail.
 
-**Security-scoped URLs.** A folder picked through `.fileImporter` is only valid inside
-`startAccessingSecurityScopedResource()`; bookmarking it outside that scope fails with
-*"The file couldn't be opened because it doesn't exist."*
+**Security-scoped URLs.** A folder that you select with `.fileImporter` is valid only between
+`startAccessingSecurityScopedResource()` and the matching stop call. A bookmark operation outside
+this range fails with the message *"The file couldn't be opened because it doesn't exist."*
 
-## Limits, honestly
+## Limits
 
-- **Free provisioning expires every 7 days.** Re-run from Xcode to re-sign. A paid membership
-  (99 €/year) removes this.
-- **Background export is best effort.** Low Power Mode, a very busy phone, or a reboot will skip a
-  slot. It is a convenience, not a guarantee — the schedule reports what actually happened.
-- **HealthKit does not exist in the iOS simulator.** Only the writing path can be tested there, via
-  the `-seed` launch argument, which runs the real writer on sample values.
-- **No weight or body-fat data appears** unless a scale writes to Apple Health. Nothing in the app
-  invents it.
-- The app assumes **one** folder. Two destinations would need one bookmark each — not implemented.
+- Free provisioning expires after 7 days. Run the app from Xcode again to sign it. A paid
+  membership (99 EUR for one year) removes this limit.
+- Background export is best effort. Low Power Mode, a busy phone or a reboot can skip a time. The
+  schedule is a convenience and not a guarantee. The screen shows the last real run.
+- HealthKit does not operate in the iOS simulator. You can test only the writing path there. Use the
+  `-seed` launch argument for this test.
+- The app shows weight and body fat only if a scale writes these values to Apple Health. The app
+  does not invent a value.
+- The app uses one folder only. Two destinations are not possible.
 
 ## Repository layout
 
 ```
-HealthSync/HealthSyncApp.swift      the whole app: specs, exporter, folder bookmark,
+HealthSync/HealthSyncApp.swift      the app: data types, exporter, folder bookmark,
                                     schedule, background task, UI, DEBUG seeder
 HealthSync/Assets.xcassets          app icon
 HealthSync/Info.plist               HealthKit usage strings, background modes
 HealthSync/HealthSync.entitlements  com.apple.developer.healthkit
-project.yml                         XcodeGen source of truth (the .xcodeproj is generated)
+project.yml                         XcodeGen source (the .xcodeproj is generated)
 tools/make-icon.py                  draws the icon with Pillow
+tools/check-ste.py                  checks the README against the STE limits
 docs/designs/                       design document
-reports/                            review and readiness reports from the design phase
+reports/                            review and readiness reports
 docs/screenshots/                   the images above
 ```
 
 ## Privacy
 
-The app has no networking code, no analytics, no third-party dependencies, and no account. It reads
-HealthKit and writes files to the folder you selected. Whatever happens to those files afterwards is
-the next tool's business — that is the point of the design.
+The app has no network code, no analytics, no third-party dependency and no account. It reads
+HealthKit and it writes files into the folder that you selected. The next tool is responsible for
+these files. This separation is the purpose of the design.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
