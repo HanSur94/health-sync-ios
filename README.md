@@ -9,11 +9,14 @@ that you select. Point a reader at these files. Then you have your own health da
 need no subscription and no cloud account.
 
 The reader that this app was made for is
-[`health-export-mcp`](https://github.com/inkandswitch/health-export-mcp). That program serves the
+[`health-export-mcp`](https://github.com/PhilipAD/health-export-mcp). That program serves the
 files to an AI agent over MCP.
 
-The alternative was a paid app that costs 24.99 EUR. This app is approximately 700 lines of Swift
-code and it uses a free Apple developer account.
+The paid alternative was MetricBridge at 24.99 EUR. That app writes the same cache files. This app
+is approximately 700 lines of Swift code and it uses a free Apple developer account.
+
+The server is an independent MIT project by Philip D'Souza. This repository does not copy it. It
+only produces the files that the server reads.
 
 <img src="docs/screenshots/main-light.png" width="300" alt="HealthSync main screen"> <img src="docs/screenshots/main-dark.png" width="300" alt="HealthSync in dark mode">
 
