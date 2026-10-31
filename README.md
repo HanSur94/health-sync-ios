@@ -25,6 +25,16 @@ are not a health record.*
 
 ---
 
+## The reader side
+
+The server is a separate project. Install it with `npx health-export-mcp` or with
+`npm install -g health-export-mcp`.
+
+Point `HEALTH_DATA_DIR` at the folder that the app writes. Then add the server to your MCP client.
+Ask your agent a health question.
+
+This app produces the files. The server reads them. Neither program needs the other to run.
+
 ## What it does
 
 - The app reads 18 health data types. These types include steps, energy, sleep, heart rate, HRV,
