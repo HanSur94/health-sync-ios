@@ -4,6 +4,10 @@
 
 [![CI](https://github.com/HanSur94/health-sync-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/HanSur94/health-sync-ios/actions/workflows/ci.yml)
 
+> **Companion to [`health-export-mcp`](https://github.com/PhilipAD/health-export-mcp).** That MIT
+> project is the MCP server. This repository is the iOS producer that writes the files the server
+> reads. The server is not included here.
+
 HealthSync is a small app for iOS. It reads Apple Health and writes three JSON files into a folder
 that you select. Point a reader at these files. Then you have your own health data pipeline. You
 need no subscription and no cloud account.
@@ -188,6 +192,12 @@ docs/screenshots/                   the images above
 The app has no network code, no analytics, no third-party dependency and no account. It reads
 HealthKit and it writes files into the folder that you selected. The next tool is responsible for
 these files. This separation is the purpose of the design.
+
+## Credits
+
+- [`health-export-mcp`](https://github.com/PhilipAD/health-export-mcp) by Philip D'Souza, MIT — the
+  MCP server this app writes for.
+- The icon is drawn by `tools/make-icon.py` with Pillow. No stock asset is used.
 
 ## License
 
