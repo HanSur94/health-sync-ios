@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  build:
+  test:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -16,9 +16,20 @@ jobs:
           brew install xcodegen
           TEAM_ID= xcodegen generate
 
-      - name: Build for the simulator
+      - name: Run the unit tests
         run: |
-          xcodebuild -project HealthSync.xcodeproj -scheme HealthSync \
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, items in devices.items()
+                     if "iOS" in runtime for d in items if d["name"].startswith("iPhone")))')
+          echo "simulator: $UDID"
+          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "id=$UDID" -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+
+      - name: Build the Release configuration
+        run: |
+          xcodebuild -project HealthSync.xcodeproj -scheme HealthSync -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
 

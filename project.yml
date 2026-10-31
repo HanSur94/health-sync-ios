@@ -21,3 +21,25 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.1.0"
         CURRENT_PROJECT_VERSION: "1"
+  HealthSyncTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [HealthSyncTests]
+    dependencies:
+      - target: HealthSync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.hannessuhr.healthsync.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  HealthSync:
+    build:
+      targets:
+        HealthSync: all
+        HealthSyncTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [HealthSyncTests]
