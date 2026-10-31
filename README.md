@@ -2,6 +2,8 @@
 
 # HealthSync
 
+[![CI](https://github.com/HanSur94/health-sync-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/HanSur94/health-sync-ios/actions/workflows/ci.yml)
+
 HealthSync is a small app for iOS. It reads Apple Health and writes three JSON files into a folder
 that you select. Point a reader at these files. Then you have your own health data pipeline. You
 need no subscription and no cloud account.

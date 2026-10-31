@@ -54,6 +54,12 @@ enum ExportError: LocalizedError {
     }
 }
 
+struct ExportSummary {
+    let metrics: Int
+    let workouts: Int
+    let sessions: Int
+}
+
 struct Exporter {
     let store = HKHealthStore()
     let cal = Calendar.current
@@ -73,7 +79,8 @@ struct Exporter {
         try await store.requestAuthorization(toShare: [], read: readTypes)
     }
 
-    func run(into folder: URL) async throws {
+    @discardableResult
+    func run(into folder: URL) async throws -> ExportSummary {
         let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -LOOKBACK_DAYS, to: Date())!)
         var metrics: [String: Any] = [:]
         for spec in SPECS {
@@ -108,6 +115,9 @@ struct Exporter {
         let workouts = try await workoutRows(from: start)
         UserDefaults.standard.set(Date(), forKey: Schedule.lastRunKey)
         try publish(metrics, workouts, sessions, into: folder)
+        return ExportSummary(metrics: metrics.count - 1,          // _meta is not a metric
+                             workouts: workouts.count,
+                             sessions: (sessions["sessions"] as? [[String: Any]])?.count ?? 0)
     }
 
     // Daily aggregate straight from HealthKit: no per-sample loop, so 2 years costs the same as 2 days.
@@ -424,7 +434,7 @@ extension ISO8601DateFormatter {
 extension Exporter {
     /// Writes a sample cache through the SAME publish() path the real export uses.
     /// Only exists so the writer can be tested where HealthKit cannot run (simulator).
-    func writeSampleCache(into folder: URL) throws {
+    func writeSampleCache(into folder: URL) throws -> ExportSummary {
         let day = { (offset: Int) -> String in
             let d = Calendar.current.date(byAdding: .day, value: -offset, to: Date())!
             return Self.dayKey(d)
@@ -435,20 +445,34 @@ extension Exporter {
         }
         let metrics: [String: Any] = [
             "step_count": series("count", true, [9123, 7455, 10233]),
+            "walking_running_distance": series("km", true, [6.4, 5.1, 7.8]),
+            "active_energy": series("kcal", true, [612, 388, 741]),
+            "heart_rate": series("count/min", false, [72, 68, 75]),
+            "resting_heart_rate": series("count/min", false, [54, 52, 55]),
             "heart_rate_variability": series("ms", false, [57.2, 61.4, 55.9]),
             "blood_oxygen_saturation": series("%", false, [0.97, 0.98, 0.96]),
-            "resting_heart_rate": series("count/min", false, [54, 52, 55]),
+            "vo2_max": series("mL/min/kg", false, [44.1, 44.3, 43.9]),
             "_meta": ["schema": 1, "app": "healthsync-ios-sample",
-                      "requested": SPECS.count, "written": 4,
+                      "requested": SPECS.count, "written": 8,
                       "writtenAt": ISO8601DateFormatter.local.string(from: Date())],
         ]
-        let workouts: [[String: Any]] = [[
-            "id": "sample-1", "name": "Running", "activityType": 37,
-            "start": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-7200)),
-            "end": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-4500)),
-            "duration": 2700, "activeEnergyBurned": 480, "distanceMeters": 7500,
-            "avgHeartRate": 148, "maxHeartRate": 172,
-        ]]
+        let workouts: [[String: Any]] = [
+            ["id": "sample-1", "name": "Running", "activityType": 37,
+             "start": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-7200)),
+             "end": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-4500)),
+             "duration": 2700, "activeEnergyBurned": 480, "distanceMeters": 7500,
+             "avgHeartRate": 148, "maxHeartRate": 172],
+            ["id": "sample-2", "name": "Functional Strength Training", "activityType": 20,
+             "start": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-90000)),
+             "end": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-86400)),
+             "duration": 3600, "activeEnergyBurned": 310,
+             "avgHeartRate": 118, "maxHeartRate": 150],
+            ["id": "sample-3", "name": "Hiking", "activityType": 24,
+             "start": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-260000)),
+             "end": ISO8601DateFormatter.local.string(from: Date().addingTimeInterval(-245000)),
+             "duration": 15000, "activeEnergyBurned": 940, "distanceMeters": 11200,
+             "avgHeartRate": 116, "maxHeartRate": 158],
+        ]
         // A sample night that goes through the REAL sessions(from:), so the clustering and the
         // session file's shape are exercised without HealthKit. Two sessions: the gap after the
         // REM block is 1.2 h, past the 1 h threshold.
@@ -475,6 +499,7 @@ extension Exporter {
         }
         try publish(metrics, workouts, ["schema": 1, "writtenAt": ISO8601DateFormatter.local.string(from: Date()),
                                        "sessions": night], into: folder)
+        return ExportSummary(metrics: metrics.count - 1, workouts: workouts.count, sessions: night.count)
     }
 
     private static func sample(_ value: HKCategoryValueSleepAnalysis, startHoursAgo: Double, hours: Double) -> HKCategorySample {
@@ -514,6 +539,8 @@ final class SyncModel: ObservableObject {
     @Published var status = "Noch nicht exportiert"
     @Published var folderName: String?
     @Published var busy = false
+    @Published var summary: ExportSummary?
+    @Published var lastExport: Date? = Schedule.lastRun
 
     let exporter = Exporter()
 
@@ -569,7 +596,8 @@ final class SyncModel: ObservableObject {
             status = "Exportiere…"
             let scoped = folder.startAccessingSecurityScopedResource()
             defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-            try await exporter.run(into: folder)
+            summary = try await exporter.run(into: folder)
+            lastExport = Date()
             status = "Fertig · \(Self.stamp())"
             log("export ok -> \(folder.path)")
         } catch {
@@ -612,74 +640,125 @@ struct ContentView: View {
         Background.schedule()
     }
 
-    private var scheduleText: String {
-        guard autoOn else { return "Aus — es exportiert nur, wenn du die App öffnest." }
+    private var statusTitle: String {
+        if model.busy { return "Export läuft" }
+        guard let when = model.lastExport else { return "Noch kein Export" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return "Exportiert " + f.localizedString(for: when, relativeTo: Date())
+    }
+
+    private var scheduleFooter: String {
+        guard autoOn else { return "Aus. Der Export startet nur, wenn du die App öffnest." }
         let f = DateFormatter()
         f.dateFormat = "EE dd.MM. HH:mm"
         let next = f.string(from: Schedule.nextFire(after: Date(), times: Schedule.times))
         let last = Schedule.lastRun.map { f.string(from: $0) } ?? "noch nie"
-        return "Frühestens \(next) · zuletzt \(last)\nDen genauen Zeitpunkt entscheidet iOS (Ladezustand, Nutzung)."
+        return "Frühestens \(next). Zuletzt \(last). iOS entscheidet den genauen Zeitpunkt."
+    }
+
+    private func stat(_ title: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var rule: some View {
+        Rectangle()
+            .fill(.quaternary)
+            .frame(width: 1, height: 28)
     }
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(model.folderName ?? "Kein Ordner gewählt")
-                    .font(.headline)
-                    .foregroundStyle(model.folderName == nil ? .secondary : .primary)
-                Text(model.status)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-
-                Button("Ordner wählen (iCloud Drive)") { picking = true }
-                    .buttonStyle(.bordered)
-
-                Button {
-                    Task { await model.exportNow() }
-                } label: {
-                    if model.busy { ProgressView() } else { Text("Jetzt exportieren") }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.busy)
-
-                Divider()
-
-                Toggle("Automatisch exportieren", isOn: $autoOn)
-                    .onChange(of: autoOn) { _, _ in Background.schedule() }
-                if autoOn {
-                    ForEach(times, id: \.self) { value in
-                        HStack {
-                            DatePicker("Uhrzeit", selection: binding(for: value), displayedComponents: .hourAndMinute)
-                                .labelsHidden()
-                            Spacer()
-                            Button(role: .destructive) {
-                                times.removeAll { $0 == value }
-                                save()
-                            } label: {
-                                Image(systemName: "minus.circle")
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: "waveform.path.ecg")
+                                .font(.title2)
+                                .foregroundStyle(.red)
+                                .frame(width: 32)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(statusTitle)
+                                    .font(.headline)
+                                Text(model.status)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
                             }
-                            .disabled(times.count == 1)
+                            Spacer()
+                            if model.busy { ProgressView() }
+                        }
+                        HStack(spacing: 0) {
+                            stat("Metriken", model.summary.map { "\($0.metrics)" } ?? "—")
+                            rule
+                            stat("Workouts", model.summary.map { "\($0.workouts)" } ?? "—")
+                            rule
+                            stat("Nächte", model.summary.map { "\($0.sessions)" } ?? "—")
                         }
                     }
-                    Button {
-                        // first full hour nobody claimed, so the new row is never a duplicate
-                        let used = Set(times.map { $0 / 60 })
-                        times.append(((0..<24).first { !used.contains($0) } ?? 12) * 60)
-                        save()
-                    } label: {
-                        Label("Uhrzeit hinzufügen", systemImage: "plus.circle")
-                    }
+                    .padding(.vertical, 6)
                 }
-                Text(scheduleText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
-                Spacer()
-                Text("Nur Lesen. Der Export landet in dem Ordner, den du wählst, und wird von dort weiterkopiert.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Section {
+                    Button {
+                        Task { await model.exportNow() }
+                    } label: {
+                        Label("Jetzt exportieren", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(model.busy)
+
+                    Button {
+                        picking = true
+                    } label: {
+                        HStack {
+                            Label("Zielordner", systemImage: "folder")
+                            Spacer()
+                            Text(model.folderName ?? "Wählen")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("Nur lesen. Der Export landet im gewählten Ordner und wird von dort weiterkopiert.")
+                }
+
+                Section {
+                    Toggle("Automatisch exportieren", isOn: $autoOn)
+                        .onChange(of: autoOn) { _, _ in Background.schedule() }
+                    if autoOn {
+                        ForEach(Array(times.enumerated()), id: \.element) { index, value in
+                            DatePicker("Uhrzeit \(index + 1)", selection: binding(for: value),
+                                       displayedComponents: .hourAndMinute)
+                        }
+                        .onDelete { offsets in
+                            guard times.count > offsets.count else { return }   // keep one slot
+                            times.remove(atOffsets: offsets)
+                            save()
+                        }
+                        Button {
+                            // first full hour nobody claimed, so the new row is never a duplicate
+                            let used = Set(times.map { $0 / 60 })
+                            times.append(((0..<24).first { !used.contains($0) } ?? 12) * 60)
+                            save()
+                        } label: {
+                            Label("Uhrzeit hinzufügen", systemImage: "plus.circle")
+                        }
+                    }
+                } header: {
+                    Text("Hintergrund")
+                } footer: {
+                    Text(scheduleFooter)
+                }
+
             }
-            .padding()
+            .listStyle(.insetGrouped)
             .navigationTitle("HealthSync")
             .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result { model.setFolder(url) }
@@ -690,16 +769,18 @@ struct ContentView: View {
                 if CommandLine.arguments.contains("-seed") {
                     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     do {
-                        try Exporter().writeSampleCache(into: docs)
+                        let summary = try Exporter().writeSampleCache(into: docs)
                         // ponytail: DEBUG-only fixture so the screenshots show a configured app
                         let demo = docs.appendingPathComponent("Health MCP (Demo)", isDirectory: true)
                         try? FileManager.default.createDirectory(at: demo, withIntermediateDirectories: true)
                         try? FolderStore.save(demo)
                         model.folderName = demo.lastPathComponent
+                        model.summary = summary
+                        model.lastExport = Date().addingTimeInterval(-6 * 3600)
                         Schedule.times = [7 * 60, 22 * 60 + 30]
                         times = Schedule.times          // @State was built before the seed ran
-                        UserDefaults.standard.set(Date().addingTimeInterval(-6 * 3600), forKey: Schedule.lastRunKey)
-                        model.status = "Beispieldaten: 18 Metriken · 3 Workouts · 2 Nächte"
+                        UserDefaults.standard.set(model.lastExport, forKey: Schedule.lastRunKey)
+                        model.status = "Beispieldaten geschrieben"
                         model.log("seed: \(docs.path)")
                     } catch { model.status = "Seeder: \(error.localizedDescription)" }
                     return

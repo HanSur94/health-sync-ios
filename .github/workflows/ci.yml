@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the project
+        run: |
+          brew install xcodegen
+          TEAM_ID= xcodegen generate
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild -project HealthSync.xcodeproj -scheme HealthSync \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+
+      - name: Check the README against the STE limits
+        run: python3 tools/check-ste.py
