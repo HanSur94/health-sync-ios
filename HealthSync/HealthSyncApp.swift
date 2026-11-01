@@ -160,9 +160,9 @@ struct Exporter {
             store.execute(q)
         }
         var perDay: [String: Double] = [:]
-        for s in samples where Self.asleepRaw.contains(s.value) {
+        for s in Self.timeline(from: samples, values: Self.asleepRaw) {
             // credited to the WAKE day (endDate), same rule as before and as the server documents
-            perDay[Self.dayKey(s.endDate), default: 0] += s.endDate.timeIntervalSince(s.startDate) / 3600
+            perDay[Self.dayKey(s.end), default: 0] += s.end.timeIntervalSince(s.start) / 3600
         }
         let daily = perDay.map { ($0.key, ($0.value * 1000).rounded() / 1000) }
         return (daily, Self.sessions(from: samples))
@@ -174,6 +174,24 @@ struct Exporter {
                                       HKCategoryValueSleepAnalysis.asleepCore.rawValue,
                                       HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
                                       HKCategoryValueSleepAnalysis.asleepREM.rawValue]
+
+    /// Collapses overlapping same-kind intervals so two sources recording the same night count
+    /// once instead of twice. Contiguous samples (end == next start) stay separate: those are
+    /// real stage changes, not duplicates.
+    /// ponytail: the interval that opened an overlap keeps its stage label; a source that merely
+    /// extends it is absorbed. Split per source only if per-stage detail starts mattering.
+    static func timeline(from samples: [HKCategorySample],
+                         values: Set<Int>) -> [(start: Date, end: Date, value: Int)] {
+        var out: [(start: Date, end: Date, value: Int)] = []
+        for s in samples.filter({ values.contains($0.value) }).sorted(by: { $0.startDate < $1.startDate }) {
+            if let last = out.last, s.startDate < last.end {
+                if s.endDate > out[out.count - 1].end { out[out.count - 1].end = s.endDate }
+            } else {
+                out.append((s.startDate, s.endDate, s.value))
+            }
+        }
+        return out
+    }
 
     static let stageNames: [Int: String] = [HKCategoryValueSleepAnalysis.asleepCore.rawValue: "core",
                                             HKCategoryValueSleepAnalysis.asleepDeep.rawValue: "deep",
@@ -197,14 +215,14 @@ struct Exporter {
         }
         return groups.compactMap { group in
             guard let first = group.first, let end = group.map({ $0.endDate }).max() else { return nil }
-            let asleep = group.filter { asleepRaw.contains($0.value) }
+            let asleep = timeline(from: group, values: asleepRaw)
             guard !asleep.isEmpty else { return nil }
-            let hours = asleep.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) } / 3600
+            let hours = asleep.reduce(0.0) { $0 + $1.end.timeIntervalSince($1.start) } / 3600
             guard hours > 0 else { return nil }
             var stages: [String: Double] = [:]
-            for g in group {
+            for g in asleep + timeline(from: group, values: [HKCategoryValueSleepAnalysis.awake.rawValue]) {
                 guard let name = stageNames[g.value] else { continue }
-                stages[name, default: 0] += g.endDate.timeIntervalSince(g.startDate) / 3600
+                stages[name, default: 0] += g.end.timeIntervalSince(g.start) / 3600
             }
             var row: [String: Any] = [
                 "start": ISO8601DateFormatter.local.string(from: first.startDate),

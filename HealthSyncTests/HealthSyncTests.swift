@@ -84,6 +84,15 @@ final class SleepSessionTests: XCTestCase {
         XCTAssertEqual(stages["awake"] ?? 0, 0.5, accuracy: 0.02)
     }
 
+    func testTwoSourcesForTheSameNightDoNotDoubleCount() {
+        let night = [sample(.asleepCore, hoursAgo: 8, hours: 3),
+                     sample(.asleepDeep, hoursAgo: 5, hours: 1),
+                     sample(.asleepREM, hoursAgo: 4, hours: 2)]
+        let rows = Exporter.sessions(from: night + night)   // Watch + a second tracker
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0]["hours"] as? Double ?? 0, 6, accuracy: 0.05)
+    }
+
     func testEverySessionCarriesTheKeysTheServerReads() {
         let rows = Exporter.sessions(from: [sample(.asleepCore, hoursAgo: 7, hours: 3)])
         XCTAssertEqual(rows.count, 1)
