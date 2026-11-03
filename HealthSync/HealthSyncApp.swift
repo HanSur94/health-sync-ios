@@ -657,6 +657,7 @@ final class SyncModel: ObservableObject {
 struct ContentView: View {
     @EnvironmentObject var model: SyncModel
     @State private var picking = false
+    @State private var showSelection = false   // DEBUG seed only: opens the screen for a screenshot
     @AppStorage(Schedule.enabledKey) private var autoOn = false
     @State private var times: [Int] = Schedule.times
 
@@ -811,6 +812,7 @@ struct ContentView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("HealthSync")
+            .navigationDestination(isPresented: $showSelection) { DataSelectionView() }
             .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result { model.setFolder(url) }
                 else if case .failure(let error) = result { model.status = "Ordner: \(error.localizedDescription)" }
@@ -833,6 +835,7 @@ struct ContentView: View {
                         UserDefaults.standard.set(model.lastExport, forKey: Schedule.lastRunKey)
                         model.status = "Beispieldaten geschrieben"
                         model.log("seed: \(docs.path)")
+                    showSelection = CommandLine.arguments.contains("-selection")
                     } catch { model.status = "Seeder: \(error.localizedDescription)" }
                     return
                 }
@@ -963,14 +966,29 @@ struct DataSelectionView: View {
             } header: {
                 Text("Weiteres")
             } footer: {
-                Text("\(on.count) von \(Selection.all.count) aktiv. Abgewählte Werte fehlen im Export und damit in den Antworten des Agenten.")
+                Text("Abgewählte Werte fehlen im Export und damit in den Antworten des Agenten.")
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Text("\(on.count) von \(Selection.all.count) aktiv")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if on.count == Selection.all.count {
+                    Text("alles an").font(.footnote).foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
         .navigationTitle("Daten")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Alle") { on = Set(Selection.all) }
+                    .disabled(on.count == Selection.all.count)
             }
         }
         .onChange(of: on) { _, new in Selection.names = new }
