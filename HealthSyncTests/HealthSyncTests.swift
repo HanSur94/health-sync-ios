@@ -148,3 +148,20 @@ final class ExportSummaryTests: XCTestCase {
         XCTAssertEqual(summary.sessions, 2)
     }
 }
+
+final class SelectionTests: XCTestCase {
+    override func tearDown() { UserDefaults.standard.removeObject(forKey: Selection.key) }
+
+    func testSelectionDefaultsToEverything() {
+        UserDefaults.standard.removeObject(forKey: Selection.key)
+        XCTAssertEqual(Selection.names, Set(Selection.all))
+        XCTAssertEqual(Selection.specs(Selection.names).count, SPECS.count)
+    }
+
+    func testOnlyChosenMetricsSurvive() {
+        Selection.names = ["step_count", "heart_rate"]
+        XCTAssertEqual(Selection.specs(Selection.names).map(\.name).sorted(), ["heart_rate", "step_count"])
+        XCTAssertFalse(Selection.names.contains(SLEEP_NAME))
+        XCTAssertFalse(Selection.names.contains(Selection.workouts))
+    }
+}

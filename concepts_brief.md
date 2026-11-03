@@ -1,50 +1,105 @@
-# Concepts brief: HealthSync (iOS) — Apple Health to the local MCP server
+# HealthSync: what "professional" means here
 
-Status: derived from the session of 2026-10-31. No paid app, no cloud, no account.
+* **Author:** Hannes Suhr + Hermes
+* **Date:** 2026-11-02
+* **Status:** brainstorm. One Goldfish lens completed and was re-verified; five were lost to a backend failure (see bottom).
 
-## Problem
+## Overview
 
-Apple Health has no API. The only way data leaves the phone is an app that reads HealthKit
-on the device. The existing pipeline (`health-export-mcp` on the NAS, 14 MCP tools) reads two
-cache files, and its producer was MetricBridge, a €24.99 one-time purchase. Hannes wants the
-same result without buying an app and without a cloud service.
+The ask was a "proper iOS app, more professional, built from the current system". The current
+system is `health-sync-ios`: 902 lines in one file, one screen at `HealthSyncApp.swift:634`, a
+read-only HealthKit-to-JSON exporter whose output an MCP server on the Mac reads. The proposal
+that went to review kept the engine and added a "Heute" screen above the control panel, showing
+sleep last night, steps, resting heart rate, workouts and export freshness.
 
-## What already exists (measured, not planned)
+The review rejected the screen. What follows is why, and what to build instead.
 
-- `~/Tools/health-export-mcp`: upstream server, unmodified, `npm test` green. Reads
-  `.health-cache.json` + `.health-workouts-cache.json` from `HEALTH_DATA_DIR`.
-- `~/Tools/apple-export-to-cache.py`: converts Apple's manual `export.zip` into those cache
-  files. Verified: 61-day synthetic export produced a cache the server accepted
-  (`get_mcp_status` → `ok:true`, 6 metrics, 9 workouts, step sum matched the XML exactly).
-- `~/Tools/healthsync-nas.sh`: Mac → NAS transport. Rewritten this session from rsync to
-  `tar | ssh` because macOS ships openrsync and the NAS runs rsync 3.4.1; checksum verified.
-- `~/Documents/10_Projects/health-sync-ios`: the app described here. Already generated and
-  compiling.
+## Analysis
 
-## Decisions already taken (do not re-litigate without cause)
+**The engine cannot stay untouched.** `run()` builds the entire metrics dictionary and the
+sessions array, then returns three counts (`:57-61`, `:118-120`). Any screen showing a number
+needs those values handed back out. "Just add a view" is a change to the exporter's contract.
 
-1. **No paid app, no cloud.** HealthKit data stays on the phone and the user's own machines.
-2. **The app writes the server's cache schema directly.** No converter on the Mac for this path.
-3. **Delivery by user-picked folder + security-scoped bookmark**, not an iCloud container:
-   an iCloud container entitlement needs a paid developer account, a picked folder does not.
-4. **Read-only.** The app never writes to HealthKit.
-5. **Free-tier signing is acceptable** (weekly re-sign) rather than €99/yr.
+**The content is Apple Health's Summary tab.** Sleep last night, steps, resting heart rate,
+workouts. Apple's version is permission-aware and always current; a copy is a worse copy on a
+surface no test can reach.
 
-## Alternatives weighed (rejected)
+**The export takes about 35 seconds.** The code says so itself (`:857`) and chose
+`BGProcessingTask` over `BGAppRefreshTask` because of it. A card filled by the export is empty or
+stale for the first half minute of every cold launch. The alternative, a HealthKit query per
+launch, does the same aggregation a second time.
 
-- MetricBridge (€24.99): works, but the whole point was avoiding the purchase.
-- Shortcuts-only automation: free and permanent, but the Find action's type is a static picker
-  per action, there is no per-day grouping primitive, and heavy queries are slow; a 14-day by
-  8-metric daily cache becomes a large fragile graph that fails silently.
-- Apple's manual `export.zip` + Python converter: works today, but manual and minutes of
-  generation time on the phone.
-- Sideloaded OSS apps (Pulso, DataDonor, HealthBridge): they invent their own schemas and
-  still need Xcode signing; no advantage over owning ~350 lines.
+**Freshness is already rendered.** `statusTitle` formats `lastExport` with
+`RelativeDateTimeFormatter` (`:661-667`), and background runs update `lastExport` too (`:116`,
+`:561`). That third of the proposal duplicates existing UI.
 
-## Open risks
+**The real gap is different, and it is not a screen.** A failed background run calls
+`setTaskCompleted(success: false)` (`:874-876`) and writes nothing the owner ever sees. That is how
+50 hours passed unnoticed in October: the failure had no surface. The Mac side had the same defect
+in its own layer — `healthsync-cron.sh` printed `FAILED` and exited 0 — fixed 2026-11-02.
 
-- Free-tier provisioning expires every 7 days; re-run from Xcode to re-sign.
-- `BGAppRefreshTask` is scheduled by iOS, not by us: background export is best-effort.
-- HealthKit is unreadable while the device is locked.
-- The app duplicates the cache-schema knowledge that the Python converter also holds; both
-  must match `healthstore.mjs`.
+**The visual system is four SF Symbols and one helper.** `stat()` at `:678-688`, symbols at
+`:702`, `:732`, `:740`, `:769`. An abstraction over that is more code than the call sites it
+replaces.
+
+## Goals vs. Non-Goals
+
+**In scope**
+
+1. One number only this app owns: last night's hours, taken from data already in scope where the
+   summary is built (`:99-101`).
+2. Staleness as a state you can see without opening the app.
+3. A visual pass at the existing call sites: the icon (`tools/make-icon.py` already generates it),
+   a type scale, honest empty and permission-denied states.
+4. Record that the signing decision changed: a paid account is pending, so profiles last a year
+   and background delivery stops being a weekly re-sign chore.
+
+**Out of scope**
+
+- A Heute or dashboard screen duplicating HealthKit aggregation.
+- Any server, any sync of the cache to the phone, any second data source.
+
+## Alternatives Weighed
+
+- **Heute screen** — rejected. Duplicates Apple Health, needs the exporter to surrender values it
+  discards, and is empty for ~35 s after launch.
+- **Widget or Lock Screen complication** — kept for the next round. The only form that shows
+  freshness without opening the app; a `TimelineProvider` over `Schedule.lastRun` needs no engine
+  change.
+- **Local notification when a background run fails** — kept, now. The smallest thing that would
+  have caught the October stop.
+- **A Shortcut reading the health sample** — rejected as the answer. It gives the number, not the
+  pipeline state, and has nowhere to show staleness.
+- **Restyle only, for screenshots** — rejected. The app would look right and stay silent.
+
+## Key Decisions & Staging for Next Steps
+
+| Severity | Finding | Evidence | Disposition |
+| --- | --- | --- | --- |
+| BLOCKER | Engine returns counts only; any card needs values it throws away | `:57-61`, `:118-120` | **REJECT** the screen requirement |
+| BLOCKER | Proposed content is Apple Health's own Summary tab | product | **REJECT** |
+| MAJOR | ~35 s export means an empty card on every cold launch | `:857` | **ACCEPT** (moot once the screen is dropped) |
+| MAJOR | A failed background run is invisible to the owner | `:874-876` | **FIX NOW**: local notification on failure |
+| MINOR | Freshness already rendered, including background runs | `:661-667`, `:116` | **ACCEPT** |
+| MINOR | Last night's hours are already in scope, one field away | `:99-101` | **FIX NOW**: field on `ExportSummary`, one `stat()` cell, one test |
+| MINOR | An abstraction over four symbols is more code, not less | `:678-688` | **REJECT**: edit the call sites |
+| NOTE | Free-tier signing was acceptable; a paid account is pending | `concepts_brief.export.md` §5 | **ACCEPT**: profiles become 1-year, background stops being a weekly chore |
+
+**Carried forward**
+
+- One target, one file, until it hurts.
+- "Professional" here means a visible pipeline state, one honest number, and a real icon. Not more
+  screens.
+- Rejected on purpose: a widget ships only after the notification proves the failure state is
+  worth seeing.
+
+## What is verified and what is not
+
+- The Contrarian lens completed. Every claim it made was re-checked against the cited lines before
+  entering the table above.
+- Five lenses (runtime cost, UX, migration, observability, debt) died when the delegation owner
+  exited mid-run. Their questions are answered above only where the code settles them: no view
+  split means nothing migrates; 902 lines is acceptable at this size; the cost argument is the 35 s
+  figure. These are my reads, not independent findings, and they are not counted as review.
+- The data path was confirmed live: the cache holds 16 metrics and 73 workouts, newest sample
+  2026-10-31, 50 hours stale when this was written.

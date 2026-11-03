@@ -11,30 +11,51 @@ import BackgroundTasks
 struct Spec {
     let id: HKQuantityTypeIdentifier
     let name: String
+    let label: String        // what the selection screen shows; the cache keeps `name`
+    let cat: String
     let unit: String
     let cumulative: Bool     // true: daily SUM (steps, energy); false: daily MEAN (HR, HRV)
 }
 
 let SPECS: [Spec] = [
-    .init(id: .stepCount, name: "step_count", unit: "count", cumulative: true),
-    .init(id: .distanceWalkingRunning, name: "walking_running_distance", unit: "km", cumulative: true),
-    .init(id: .activeEnergyBurned, name: "active_energy", unit: "kcal", cumulative: true),
-    .init(id: .basalEnergyBurned, name: "basal_energy_burned", unit: "kcal", cumulative: true),
-    .init(id: .flightsClimbed, name: "flights_climbed", unit: "count", cumulative: true),
-    .init(id: .appleExerciseTime, name: "exercise_time", unit: "min", cumulative: true),
-    .init(id: .appleStandTime, name: "apple_stand_time", unit: "min", cumulative: true),
-    .init(id: .dietaryWater, name: "dietary_water", unit: "L", cumulative: true),
-    .init(id: .heartRate, name: "heart_rate", unit: "count/min", cumulative: false),
-    .init(id: .restingHeartRate, name: "resting_heart_rate", unit: "count/min", cumulative: false),
-    .init(id: .walkingHeartRateAverage, name: "walking_heart_rate_average", unit: "count/min", cumulative: false),
-    .init(id: .heartRateVariabilitySDNN, name: "heart_rate_variability", unit: "ms", cumulative: false),
-    .init(id: .respiratoryRate, name: "respiratory_rate", unit: "count/min", cumulative: false),
-    .init(id: .oxygenSaturation, name: "blood_oxygen_saturation", unit: "%", cumulative: false),
-    .init(id: .bodyMass, name: "weight_body_mass", unit: "kg", cumulative: false),
-    .init(id: .bodyFatPercentage, name: "body_fat_percentage", unit: "%", cumulative: false),
-    .init(id: .vo2Max, name: "vo2_max", unit: "mL/min/kg", cumulative: false),
-    .init(id: .walkingSpeed, name: "walking_speed", unit: "km/hr", cumulative: false),
+    .init(id: .stepCount, name: "step_count", label: "Schritte", cat: "Aktivität", unit: "count", cumulative: true),
+    .init(id: .distanceWalkingRunning, name: "walking_running_distance", label: "Strecke", cat: "Aktivität", unit: "km", cumulative: true),
+    .init(id: .activeEnergyBurned, name: "active_energy", label: "Aktive Energie", cat: "Aktivität", unit: "kcal", cumulative: true),
+    .init(id: .basalEnergyBurned, name: "basal_energy_burned", label: "Grundumsatz", cat: "Aktivität", unit: "kcal", cumulative: true),
+    .init(id: .flightsClimbed, name: "flights_climbed", label: "Stockwerke", cat: "Aktivität", unit: "count", cumulative: true),
+    .init(id: .appleExerciseTime, name: "exercise_time", label: "Trainingsminuten", cat: "Aktivität", unit: "min", cumulative: true),
+    .init(id: .appleStandTime, name: "apple_stand_time", label: "Stehminuten", cat: "Aktivität", unit: "min", cumulative: true),
+    .init(id: .dietaryWater, name: "dietary_water", label: "Wasser", cat: "Körper", unit: "L", cumulative: true),
+    .init(id: .heartRate, name: "heart_rate", label: "Herzfrequenz", cat: "Herz", unit: "count/min", cumulative: false),
+    .init(id: .restingHeartRate, name: "resting_heart_rate", label: "Ruhepuls", cat: "Herz", unit: "count/min", cumulative: false),
+    .init(id: .walkingHeartRateAverage, name: "walking_heart_rate_average", label: "Gehpuls", cat: "Herz", unit: "count/min", cumulative: false),
+    .init(id: .heartRateVariabilitySDNN, name: "heart_rate_variability", label: "HRV", cat: "Herz", unit: "ms", cumulative: false),
+    .init(id: .respiratoryRate, name: "respiratory_rate", label: "Atemfrequenz", cat: "Vitalwerte", unit: "count/min", cumulative: false),
+    .init(id: .oxygenSaturation, name: "blood_oxygen_saturation", label: "Sauerstoffsättigung", cat: "Vitalwerte", unit: "%", cumulative: false),
+    .init(id: .bodyMass, name: "weight_body_mass", label: "Gewicht", cat: "Körper", unit: "kg", cumulative: false),
+    .init(id: .bodyFatPercentage, name: "body_fat_percentage", label: "Körperfett", cat: "Körper", unit: "%", cumulative: false),
+    .init(id: .vo2Max, name: "vo2_max", label: "VO₂max", cat: "Vitalwerte", unit: "mL/min/kg", cumulative: false),
+    .init(id: .walkingSpeed, name: "walking_speed", label: "Gehgeschwindigkeit", cat: "Vitalwerte", unit: "km/hr", cumulative: false),
 ]
+
+/// Which metrics the owner wants exported. Stored by name, so the table above can grow
+/// without a migration; a missing key means everything, which is what older installs expect.
+enum Selection {
+    static let key = "export.selection"
+    static let workouts = "workouts"
+
+    /// Sleep and workouts are not quantity specs, but they are selectable the same way.
+    static var all: [String] { SPECS.map(\.name) + [SLEEP_NAME, workouts] }
+
+    static var names: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: key) ?? all) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: key) }
+    }
+
+    static func specs(_ enabled: Set<String>) -> [Spec] {
+        SPECS.filter { enabled.contains($0.name) }
+    }
+}
 
 let LOOKBACK_DAYS = 730          // ponytail: one constant, ~2 years. Raise if you want deeper history.
 let SLEEP_NAME = "sleep_analysis"
@@ -83,27 +104,29 @@ struct Exporter {
     func run(into folder: URL) async throws -> ExportSummary {
         let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -LOOKBACK_DAYS, to: Date())!)
         var metrics: [String: Any] = [:]
-        for spec in SPECS {
+        let enabled = Selection.names
+        let chosen = Selection.specs(enabled)
+        for spec in chosen {
             guard let type = HKQuantityType.quantityType(forIdentifier: spec.id) else { continue }
             let daily = try await dailyPoints(type: type, spec: spec, from: start)
             guard !daily.isEmpty else { continue }
             metrics[spec.name] = ["unit": spec.unit, "cumulative": spec.cumulative,
                                   "daily": daily.sorted { $0.d < $1.d }.map { ["d": $0.d, "v": $0.v] }]
         }
-        let sleepData = try await sleep(from: start)
-        if !sleepData.daily.isEmpty {
+        let sleepData = enabled.contains(SLEEP_NAME) ? try await sleep(from: start) : nil
+        if let sleepData, !sleepData.daily.isEmpty {
             metrics[SLEEP_NAME] = ["unit": "hr", "cumulative": true,
                                    "daily": sleepData.daily.sorted { $0.d < $1.d }.map { ["d": $0.d, "v": $0.v] }]
         }
         // same shape MetricBridge writes, so get_sleep_sessions works either way
         let sessions: [String: Any] = ["schema": 1,
                                        "writtenAt": ISO8601DateFormatter.local.string(from: Date()),
-                                       "sessions": sleepData.sessions]
+                                       "sessions": sleepData?.sessions ?? []]
         // requested vs written is the only way to see a PARTIAL read denial: HealthKit refuses
         // silently per type, so "I asked for 18 and got 9" is the difference between a healthy
         // phone without data and a permission the owner never granted.
         metrics["_meta"] = ["schema": 1, "app": "healthsync-ios",
-                            "requested": SPECS.count, "written": metrics.count,
+                            "requested": chosen.count, "written": metrics.count,
                             "writtenAt": ISO8601DateFormatter.local.string(from: Date())]
 
         // HealthKit reports no per-type denial, so an all-empty run is the only signal that reads
@@ -112,12 +135,12 @@ struct Exporter {
         guard metrics.count > 1 else {
             throw ExportError.writeFailed("no HealthKit data returned, previous export kept")
         }
-        let workouts = try await workoutRows(from: start)
+        let workouts = enabled.contains(Selection.workouts) ? try await workoutRows(from: start) : []
         UserDefaults.standard.set(Date(), forKey: Schedule.lastRunKey)
         try publish(metrics, workouts, sessions, into: folder)
         return ExportSummary(metrics: metrics.count - 1,          // _meta is not a metric
                              workouts: workouts.count,
-                             sessions: (sessions["sessions"] as? [[String: Any]])?.count ?? 0)
+                             sessions: sleepData?.sessions.count ?? 0)
     }
 
     // Daily aggregate straight from HealthKit: no per-sample loop, so 2 years costs the same as 2 days.
@@ -726,6 +749,16 @@ struct ContentView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        DataSelectionView()
+                    } label: {
+                        Label("Daten auswählen", systemImage: "slider.horizontal.3")
+                    }
+                } footer: {
+                    Text("Was du abwählst, fehlt dem Agenten. Die Auswahl gilt ab dem nächsten Export.")
+                }
+
+                Section {
                     Button {
                         Task { await model.exportNow() }
                     } label: {
@@ -900,3 +933,53 @@ struct HealthSyncApp: App {
         WindowGroup { ContentView().environmentObject(model) }
     }
 }
+
+// MARK: - Data selection
+
+/// What leaves the phone. Toggles write straight to Selection; nothing re-exports by itself,
+/// the next run (manual or background) picks the new set up.
+struct DataSelectionView: View {
+    @State private var on: Set<String> = Selection.names
+
+    /// Category order as it first appears in SPECS, so the table stays the only place to edit.
+    private var cats: [String] {
+        var seen = Set<String>(), out: [String] = []
+        for s in SPECS where seen.insert(s.cat).inserted { out.append(s.cat) }
+        return out
+    }
+
+    var body: some View {
+        List {
+            ForEach(cats, id: \.self) { cat in
+                Section(cat) {
+                    ForEach(SPECS.filter { $0.cat == cat }, id: \.name) { spec in
+                        row(spec.label, spec.name)
+                    }
+                }
+            }
+            Section {
+                row("Schlaf (Nächte & Phasen)", SLEEP_NAME)
+                row("Workouts", Selection.workouts)
+            } header: {
+                Text("Weiteres")
+            } footer: {
+                Text("\(on.count) von \(Selection.all.count) aktiv. Abgewählte Werte fehlen im Export und damit in den Antworten des Agenten.")
+            }
+        }
+        .navigationTitle("Daten")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Alle") { on = Set(Selection.all) }
+            }
+        }
+        .onChange(of: on) { _, new in Selection.names = new }
+    }
+
+    private func row(_ label: String, _ name: String) -> some View {
+        Toggle(label, isOn: Binding(
+            get: { on.contains(name) },
+            set: { if $0 { on.insert(name) } else { on.remove(name) } }))
+    }
+}
+
